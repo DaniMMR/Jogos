@@ -1,4 +1,4 @@
-# 🛡️ Shield Sprint (ou o nome que você escolheu)
+# 🛡️ Shield Sprint
 
 Um jogo de corrida infinita baseado em física real, desenvolvido com HTML5 Canvas e JavaScript puro.
 
