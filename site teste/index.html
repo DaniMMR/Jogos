@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Physics Runner - Obstáculos Ajustados</title>
+    <style>
+        :root {
+            --danger: #ef4444;
+            --success: #10b981;
+            --primary: #38bdf8;
+            --warning: #fbbf24;
+            --shield: #22d3ee;
+        }
+        body { margin: 0; overflow: hidden; background: #0f172a; font-family: 'Segoe UI', sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; color: white; }
+        canvas { border: 4px solid #334155; border-radius: 12px; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5); background: linear-gradient(to bottom, #1e293b, #0f172a); }
+        
+        .ui-overlay { position: absolute; top: 20px; left: 20px; pointer-events: none; }
+        .hp-bar-container { width: 200px; height: 15px; background: #334155; border-radius: 10px; overflow: hidden; border: 2px solid #475569; margin-top: 5px; }
+        #hp-fill { width: 100%; height: 100%; background: var(--success); transition: width 0.2s ease; }
+        
+        .stats { position: absolute; top: 20px; right: 20px; background: rgba(0,0,0,0.6); padding: 15px; border-radius: 8px; border: 1px solid #475569; text-align: right; }
+        
+        #shield-ui { display: none; margin-top: 10px; font-weight: bold; color: var(--shield); text-shadow: 0 0 10px var(--shield); }
+        
+        #game-over { display: none; position: absolute; background: rgba(15, 23, 42, 0.95); padding: 40px; border-radius: 20px; text-align: center; border: 2px solid var(--danger); z-index: 100; }
+        .btn-restart { background: var(--primary); color: #0f172a; border: none; padding: 12px 25px; border-radius: 8px; font-weight: bold; cursor: pointer; margin-top: 20px; }
+        .jump-badge { font-size: 0.7rem; color: var(--primary); margin-top: 5px; display: block; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+<div class="ui-overlay">
+    <div style="font-weight: bold; letter-spacing: 1px;">SISTEMA DE DEFESA</div>
+    <div class="hp-bar-container"><div id="hp-fill"></div></div>
+    <span class="jump-badge" id="jump-status">PULO DUPLO DISPONÍVEL</span>
+    <div id="shield-ui">🛡️ ESCUDO ATIVO: <span id="shield-timer">20</span>s</div>
+</div>
+
+<div class="stats">
+    Distância: <span id="dist">0</span>m<br>
+    <small style="color: var(--warning)">DANO: APENAS PROJÉTEIS</small>
+</div>
+
+<div id="game-over">
+    <h1 style="color: var(--danger); font-size: 3rem;">SISTEMA OFFLINE</h1>
+    <p>Distância final: <span id="final-dist">0</span>m</p>
+    <button class="btn-restart" onclick="resetGame()">Reiniciar</button>
+</div>
+
+<canvas id="gameCanvas"></canvas>
+
+<script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const hpFill = document.getElementById('hp-fill');
+    const distElement = document.getElementById('dist');
+    const shieldUI = document.getElementById('shield-ui');
+    const shieldTimer = document.getElementById('shield-timer');
+    const gameOverScreen = document.getElementById('game-over');
+    const finalDistElement = document.getElementById('final-dist');
+    const jumpStatus = document.getElementById('jump-status');
+
+    canvas.width = 900;
+    canvas.height = 500;
+
+    let keys = {};
+    let distance = 0;
+    let gameSpeed = 2.2;
+    let isGameOver = false;
+    let flashRed = 0;
+
+    // Lógica do Escudo
+    let shieldAvailable = true;
+    let isShieldActive = false;
+    let shieldRemainingTime = 0;
+
+    window.addEventListener('keydown', e => {
+        if (!keys[e.code] && (e.code === 'Space' || e.code === 'KeyW' || e.code === 'ArrowUp')) {
+            player.jump();
+        }
+        keys[e.code] = true;
+    });
+    window.addEventListener('keyup', e => keys[e.code] = false);
+
+    class Projectile {
+        constructor() { this.reset(); }
+        reset() {
+            this.radius = 8;
+            this.x = canvas.width + Math.random() * 1200;
+            this.y = Math.random() * (canvas.height - 150) + 70;
+            this.speed = (Math.random() * 2 + 3.8) + (gameSpeed * 0.4);
+            this.color = '#fbbf24'; 
+        }
+        update() {
+            this.x -= this.speed;
+            if (this.x + this.radius < 0) this.reset();
+
+            let dx = this.x - player.x;
+            let dy = this.y - player.y;
+            let dist = Math.sqrt(dx * dx + dy * dy);
+
+            if (dist < this.radius + player.radius) {
+                if (!isShieldActive) {
+                    player.takeDamage(20);
+                }
+                this.reset();
+            }
+        }
+        draw() {
+            ctx.fillStyle = isShieldActive ? '#94a3b8' : this.color;
+            ctx.shadowBlur = isShieldActive ? 0 : 15;
+            ctx.shadowColor = this.color;
+            ctx.beginPath();
+            ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.shadowBlur = 0;
+        }
+    }
+
+    class Obstacle {
+        constructor(x) { this.reset(x); }
+        reset(x) {
+            this.width = Math.random() * 60 + 40;
+            // ALTURA AJUSTADA: Máximo de 50px para não dificultar excessivamente o salto
+            this.height = Math.random() * 30 + 20; 
+            this.x = x;
+            this.y = canvas.height - 20 - this.height;
+        }
+        update() {
+            this.x -= gameSpeed;
+            if (this.x + this.width < -100) this.reset(canvas.width + Math.random() * 500);
+        }
+        draw() {
+            ctx.fillStyle = '#475569';
+            ctx.fillRect(this.x, this.y, this.width, this.height);
+            ctx.fillStyle = '#94a3b8'; 
+            ctx.fillRect(this.x, this.y, this.width, 4);
+        }
+    }
+
+    let obstacles = [new Obstacle(800), new Obstacle(1400), new Obstacle(2000)];
+    let projectiles = [new Projectile(), new Projectile(), new Projectile()];
+
+    const player = {
+        x: 150, y: 400, radius: 16,
+        velX: 0, velY: 0,
+        hp: 100,
+        speed: 0.45,
+        jumpForce: -11.5,
+        gravity: 0.6,
+        friction: 0.9,
+        grounded: false,
+        jumpCount: 0,
+
+        jump() {
+            if (isGameOver) return;
+            if (this.grounded) {
+                this.velY = this.jumpForce;
+                this.grounded = false;
+                this.jumpCount = 1;
+            } else if (this.jumpCount < 2) {
+                this.velY = this.jumpForce * 0.85;
+                this.jumpCount = 2;
+            }
+            this.updateJumpUI();
+        },
+
+        update() {
+            if(isGameOver) return;
+
+            if (distance >= 200 && shieldAvailable) activateShield();
+
+            let accel = (keys['ShiftLeft'] || keys['ShiftRight']) ? this.speed * 1.7 : this.speed;
+
+            if (keys['KeyD'] || keys['ArrowRight']) this.velX += accel;
+            if (keys['KeyA'] || keys['ArrowLeft']) this.velX -= accel;
+
+            this.velY += this.gravity;
+            this.velX *= this.friction;
+            this.x += this.velX;
+            this.y += this.velY;
+
+            if (this.x < this.radius) this.x = this.radius;
+            if (this.x > canvas.width * 0.4) this.x = canvas.width * 0.4;
+
+            if (this.y + this.radius > canvas.height - 20) {
+                this.y = canvas.height - 20 - this.radius;
+                this.velY = 0;
+                if (!this.grounded) {
+                    this.grounded = true;
+                    this.jumpCount = 0;
+                    this.updateJumpUI();
+                }
+            }
+
+            obstacles.forEach(obs => {
+                if (this.x + this.radius > obs.x && this.x - this.radius < obs.x + obs.width && this.y + this.radius > obs.y) {
+                    if(this.y - this.radius < obs.y - 10 && this.velY >= 0) {
+                        this.y = obs.y - this.radius;
+                        this.velY = 0;
+                        if (!this.grounded) {
+                            this.grounded = true;
+                            this.jumpCount = 0;
+                            this.updateJumpUI();
+                        }
+                    } else if (this.x + this.radius > obs.x && this.x < obs.x + 20) {
+                        this.x = obs.x - this.radius;
+                        this.velX = -gameSpeed;
+                    }
+                }
+            });
+
+            if (this.x + this.radius < 0) this.takeDamage(100);
+        },
+
+        updateJumpUI() {
+            if (this.jumpCount === 0) jumpStatus.innerText = "PULO DUPLO DISPONÍVEL";
+            else if (this.jumpCount === 1) jumpStatus.innerText = "ÚLTIMO SALTO!";
+            else jumpStatus.innerText = "SEM SALTOS";
+            jumpStatus.style.color = this.jumpCount < 2 ? "var(--primary)" : "#64748b";
+        },
+
+        takeDamage(amount) {
+            this.hp -= amount;
+            flashRed = 12;
+            if(this.hp <= 0) endGame();
+            this.updateUI();
+        },
+
+        updateUI() {
+            hpFill.style.width = this.hp + "%";
+            hpFill.style.backgroundColor = this.hp < 40 ? "var(--danger)" : "var(--success)";
+        },
+
+        draw() {
+            ctx.save();
+            if(isShieldActive) {
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius + 8, 0, Math.PI * 2);
+                ctx.strokeStyle = '#22d3ee';
+                ctx.lineWidth = 3;
+                ctx.stroke();
+                ctx.shadowBlur = 15;
+                ctx.shadowColor = '#22d3ee';
+            }
+            if(flashRed > 0 && !isShieldActive) {
+                ctx.shadowBlur = 25;
+                ctx.shadowColor = "red";
+                flashRed--;
+            }
+            let grad = ctx.createRadialGradient(this.x - 5, this.y - 5, 2, this.x, this.y, this.radius);
+            grad.addColorStop(0, isShieldActive ? '#a5f3fc' : '#38bdf8');
+            grad.addColorStop(1, isShieldActive ? '#0891b2' : '#0369a1');
+            ctx.fillStyle = grad;
+            ctx.beginPath();
+            ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+        }
+    };
+
+    function activateShield() {
+        shieldAvailable = false;
+        isShieldActive = true;
+        shieldRemainingTime = 20;
+        shieldUI.style.display = 'block';
+        const timerInterval = setInterval(() => {
+            shieldRemainingTime--;
+            shieldTimer.innerText = shieldRemainingTime;
+            if (shieldRemainingTime <= 0) {
+                isShieldActive = false;
+                shieldUI.style.display = 'none';
+                clearInterval(timerInterval);
+            }
+        }, 1000);
+    }
+
+    function endGame() {
+        isGameOver = true;
+        gameOverScreen.style.display = 'block';
+        finalDistElement.innerText = Math.floor(distance);
+    }
+
+    function resetGame() {
+        player.hp = 100; player.x = 150; player.y = 400; player.jumpCount = 0;
+        shieldAvailable = true; isShieldActive = false; shieldUI.style.display = 'none';
+        player.updateUI(); player.updateJumpUI();
+        distance = 0; gameSpeed = 2.2;
+        obstacles.forEach((obs, i) => obs.reset(800 + i * 600));
+        projectiles.forEach(p => p.reset());
+        isGameOver = false; gameOverScreen.style.display = 'none';
+        animate();
+    }
+
+    function animate() {
+        if(isGameOver) return;
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = '#334155';
+        ctx.fillRect(0, canvas.height - 20, canvas.width, 20);
+        distance += gameSpeed / 30;
+        distElement.innerText = Math.floor(distance);
+        gameSpeed += 0.00025;
+        obstacles.forEach(obs => { obs.update(); obs.draw(); });
+        projectiles.forEach(p => { p.update(); p.draw(); });
+        player.update(); player.draw();
+        requestAnimationFrame(animate);
+    }
+    animate();
+</script>
+</body>
+</html>
